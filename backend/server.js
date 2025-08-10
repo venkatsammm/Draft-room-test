@@ -323,8 +323,8 @@ function moveToNextTurn(roomId, rooms) {
       console.log(`👤 Next turn: ${nextUser.username} (${nextUserId}) - Round ${room.draftRound}`);
       
       // Schedule next auto-pick
-      setTimeout(() => {
-        performAutoPick(roomId, room);
+      setTimeout(async () => {
+        await performAutoPick(roomId, room);
       }, 3000); // 3 second delay between picks
       
     } else {
@@ -713,7 +713,7 @@ function startAutoPicking(roomId, room) {
 /**
  * Perform auto-pick for a room
  */
-function performAutoPick(roomId, room) {
+async function performAutoPick(roomId, room) {
   try {
     console.log(`🤖 Performing auto-pick for room ${roomId}`);
     
@@ -761,43 +761,60 @@ function performAutoPick(roomId, room) {
     if (selection) {
       console.log(`✅ Auto-picked ${selection.PlayerID} (${selection.Position}) for ${currentUser.username}`);
       
-      // Add player to user's selections with round info
-      if (!room.selections[currentTurnUserId]) {
-        room.selections[currentTurnUserId] = [];
+      try {
+        // Use Redis service to properly pick the player (this updates Redis stats and picked_ids)
+        await redisDraftService.pickPlayer(
+          roomId, 
+          selection.PlayerID, 
+          currentTurnUserId, 
+          currentUser.username, 
+          room.draftRound, 
+          (room.selections[currentTurnUserId]?.length || 0) + 1
+        );
+        
+        // Add player to user's selections with round info (keep in-memory for UI)
+        if (!room.selections[currentTurnUserId]) {
+          room.selections[currentTurnUserId] = [];
+        }
+        
+        // Add round information to the selection
+        const selectionWithRound = {
+          ...selection,
+          round: room.draftRound,
+          pickTime: new Date().toISOString(),
+          autoSelected: true
+        };
+        
+        room.selections[currentTurnUserId].push(selectionWithRound);
+        
+        // Remove player from pool (keep in-memory for UI)
+        const playerIndex = room.pool.findIndex(p => p.PlayerID === selection.PlayerID);
+        if (playerIndex !== -1) {
+          room.pool.splice(playerIndex, 1);
+        }
+        
+        // Publish auto-pick event
+        if (ably) {
+          const channel = ably.channels.get(`draft-room-${roomId}`);
+          publishChunked(channel, 'player-selected-pool', room.pool, 10);
+          publishChunked(channel, 'player-selected-selections', Object.entries(getSelectionsWithUsernames(room)), 10);
+          publishWithServerRateLimit(channel, 'player-selected-meta', {
+            player: selection,
+            selectedBy: currentUser.username,
+            userId: currentTurnUserId,
+            autoSelected: true,
+            wasPreferred: false
+          });
+        }
+        
+        // Move to next turn
+        moveToNextTurn(roomId, rooms);
+        
+      } catch (error) {
+        console.error(`❌ Redis auto-pick failed for room ${roomId}:`, error.message);
+        // Move to next turn even if Redis update failed
+        moveToNextTurn(roomId, rooms);
       }
-      
-      // Add round information to the selection
-      const selectionWithRound = {
-        ...selection,
-        round: room.draftRound,
-        pickTime: new Date().toISOString(),
-        autoSelected: true
-      };
-      
-      room.selections[currentTurnUserId].push(selectionWithRound);
-      
-      // Remove player from pool
-      const playerIndex = room.pool.findIndex(p => p.PlayerID === selection.PlayerID);
-      if (playerIndex !== -1) {
-        room.pool.splice(playerIndex, 1);
-      }
-      
-      // Publish auto-pick event
-      if (ably) {
-        const channel = ably.channels.get(`draft-room-${roomId}`);
-        publishChunked(channel, 'player-selected-pool', room.pool, 10);
-        publishChunked(channel, 'player-selected-selections', Object.entries(getSelectionsWithUsernames(room)), 10);
-        publishWithServerRateLimit(channel, 'player-selected-meta', {
-          player: selection,
-          selectedBy: currentUser.username,
-          userId: currentTurnUserId,
-          autoSelected: true,
-          wasPreferred: false
-        });
-      }
-      
-      // Move to next turn
-      moveToNextTurn(roomId, rooms);
       
     } else {
       console.log(`❌ No valid player available for auto-pick in room ${roomId}`);
@@ -2007,6 +2024,57 @@ app.get('/api/redis/health', async (req, res) => {
   }
 });
 
+// Debug endpoint to inspect Redis data for a room
+app.get('/api/redis/debug/:roomId', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    
+    // Get various Redis keys for debugging
+    const stats = await redisDraftService.redis.hGetAll(`draft:room:${roomId}:stats`);
+    const pickedCount = await redisDraftService.redis.sCard(`draft:room:${roomId}:picked_ids`);
+    const picksData = await redisDraftService.redis.hGetAll(`draft:room:${roomId}:picks_data`);
+    const masterListCount = await redisDraftService.redis.sCard('draft:master_list');
+    
+    // Get first few picked IDs
+    const firstPickedIds = await redisDraftService.redis.sMembers(`draft:room:${roomId}:picked_ids`);
+    const firstFewPicked = firstPickedIds.slice(0, 5);
+    
+    // Get sample pick data
+    const samplePicks = {};
+    for (const playerId of firstFewPicked) {
+      const pickData = await redisDraftService.redis.hGet(`draft:room:${roomId}:picks_data`, playerId);
+      if (pickData) {
+        try {
+          samplePicks[playerId] = JSON.parse(pickData);
+        } catch (e) {
+          samplePicks[playerId] = pickData; // Raw data if parsing fails
+        }
+      }
+    }
+    
+    res.json({
+      roomId,
+      debug: {
+        stats,
+        pickedCount,
+        picksDataCount: Object.keys(picksData).length,
+        masterListCount,
+        firstFewPickedIds: firstFewPicked,
+        samplePicks,
+        redisKeys: {
+          statsKey: `draft:room:${roomId}:stats`,
+          pickedIdsKey: `draft:room:${roomId}:picked_ids`,
+          picksDataKey: `draft:room:${roomId}:picks_data`
+        }
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error in Redis debug endpoint:', error);
+    res.status(500).json({ error: 'Failed to debug Redis data', details: error.message });
+  }
+});
+
 // Contest monitoring endpoints
 app.post('/api/contests/check', async (req, res) => {
   try {
@@ -2222,15 +2290,15 @@ function startTurn(roomId, rooms) {
     return user ? user.username : id;
   }).join(' → ')}`);
 
-  // Check if user is connected
-  const isConnected = room.users.find(u => u.id === currentTurnUserId && u.isConnected);
-  if (!isConnected) {
-    console.log(`⏰ User ${currentUser.username} is not connected - auto-picking after ${AUTO_PICK_INTERVAL_SECONDS} seconds`);
-    setTimeout(() => {
-      performAutoPick(roomId, room);
-    }, AUTO_PICK_INTERVAL_SECONDS * 1000);
-    return;
-  }
+      // Check if user is connected
+    const isConnected = room.users.find(u => u.id === currentTurnUserId && u.isConnected);
+    if (!isConnected) {
+      console.log(`⏰ User ${currentUser.username} is not connected - auto-picking after ${AUTO_PICK_INTERVAL_SECONDS} seconds`);
+      setTimeout(async () => {
+        await performAutoPick(roomId, room);
+      }, AUTO_PICK_INTERVAL_SECONDS * 1000);
+      return;
+    }
 
   // Set turn timer for connected users
   let timeLeft = AUTO_PICK_INTERVAL_SECONDS;
@@ -2243,7 +2311,9 @@ function startTurn(roomId, rooms) {
       clearInterval(room.turnTimer);
       room.turnTimer = null;
       console.log(`⏰ Time's up for ${currentUser.username} - auto-picking`);
-      performAutoPick(roomId, room);
+      performAutoPick(roomId, room).catch(error => {
+        console.error(`❌ Auto-pick failed in turn timer:`, error.message);
+      });
     }
   }, 1000);
 

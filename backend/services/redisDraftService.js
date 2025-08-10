@@ -300,14 +300,42 @@ class RedisDraftService {
     }
 
     try {
-      const result = await this.redis.eval(this.luaScripts.pickPlayer, {
-        keys: [roomId],
-        arguments: [String(playerId), String(userId), String(username), String(timestamp), String(round), String(pickNumber)]
-      });
-      
-      if (result[0] === 'err') {
-        throw new Error(result[1]);
+      // Check if player is already picked in this room
+      const isPicked = await this.redis.sIsMember(`draft:room:${roomId}:picked_ids`, playerId);
+      if (isPicked === 1) {
+        throw new Error('Player already picked');
       }
+
+      // Check if player exists in master list
+      const existsInMaster = await this.redis.sIsMember('draft:master_list', playerId);
+      if (existsInMaster === 0) {
+        throw new Error('Player not found in master list');
+      }
+
+      // Use Redis pipeline for atomic operations
+      const pipeline = this.redis.multi();
+      
+      // Add player to picked set
+      pipeline.sAdd(`draft:room:${roomId}:picked_ids`, playerId);
+      
+      // Store pick metadata
+      const pickKey = `draft:room:${roomId}:picks_data`;
+      pipeline.hSet(pickKey, playerId, JSON.stringify({
+        userId: userId,
+        username: username,
+        timestamp: timestamp,
+        round: round,
+        pickNumber: pickNumber
+      }));
+      
+      // Update room stats
+      const statsKey = `draft:room:${roomId}:stats`;
+      pipeline.hIncrBy(statsKey, 'totalPicks', 1);
+      pipeline.hSet(statsKey, 'lastPickTime', timestamp);
+      pipeline.hSet(statsKey, 'currentRound', round);
+      
+      // Execute all operations atomically
+      await pipeline.exec();
       
       console.log(`✅ Player ${playerId} picked by ${username} in room ${roomId}`);
       return {
@@ -351,19 +379,24 @@ class RedisDraftService {
     }
 
     try {
-      const result = await this.redis.eval(this.luaScripts.getRoomStats, {
-        keys: [roomId],
-        arguments: []
-      });
+      // Get stats from Redis hash
+      const stats = await this.redis.hGetAll(`draft:room:${roomId}:stats`);
       
-      const stats = {};
-      for (let i = 0; i < result[0].length; i += 2) {
-        stats[result[0][i]] = result[0][i + 1];
-      }
+      // Get actual picked count from the picked_ids set
+      const pickedCount = await this.redis.sCard(`draft:room:${roomId}:picked_ids`);
+      
+      // Calculate total picks from the actual picked set count
+      const totalPicks = pickedCount;
       
       return {
-        ...stats,
-        pickedCount: result[1]
+        roomId,
+        createdAt: stats.createdAt || '',
+        currentRound: stats.currentRound || '1',
+        totalPicks: String(totalPicks), // Convert to string to match expected format
+        lastPickTime: stats.lastPickTime || '',
+        userCount: stats.userCount || '0',
+        lastUserUpdate: stats.lastUserUpdate || '',
+        pickedCount: pickedCount
       };
     } catch (error) {
       console.error('❌ Failed to get room stats:', error);

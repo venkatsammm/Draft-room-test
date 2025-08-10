@@ -1,4 +1,4 @@
-# version: '3.8'
+version: '3.8'
 
 services:
   app:
@@ -13,8 +13,6 @@ services:
       - DB_NAME=${DB_NAME}
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
-      - REDIS_HOST=${REDIS_HOST}
-      - REDIS_PORT=${REDIS_PORT}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
     env_file:
-      - .env 
+      - .env
+    restart: unless-stopped 
