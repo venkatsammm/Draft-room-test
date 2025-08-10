@@ -1,0 +1,28 @@
+[
+  {
+    "lineupName": "LINEUP 1",
+    "positions": [
+      { "position": "QB", "minDraftable": 1, "maxDraftable": 3, "notes": "1 starter + 2 bench" },
+      { "position": "RB", "minDraftable": 2, "maxDraftable": 5, "notes": "2 starter + 1 FLEX + 2 bench" },
+      { "position": "WR", "minDraftable": 3, "maxDraftable": 6, "notes": "3 starter + 1 FLEX + 2 bench" },
+      { "position": "TE", "minDraftable": 1, "maxDraftable": 4, "notes": "1 starter + 1 FLEX + 2 bench" },
+      { "position": "K", "minDraftable": 1, "maxDraftable": 3, "notes": "1 starter + 2 bench" },
+      { "position": "DST", "minDraftable": 1, "maxDraftable": 3, "notes": "1 starter + 2 bench" },
+      { "position": "FLEX", "minDraftable": 1, "maxDraftable": 1, "notes": "Required slot, accepts RB/WR/TE" },
+      { "position": "BENCH", "minDraftable": 2, "maxDraftable": 2, "notes": "2 bench slots" }
+    ]
+  },
+  {
+    "lineupName": "LINEUP 2",
+    "positions": [
+      { "position": "QB", "minDraftable": 1, "maxDraftable": 3, "notes": "1 starter + 2 bench" },
+      { "position": "RB", "minDraftable": 2, "maxDraftable": 5, "notes": "2 starter + 1 FLEX + 2 bench" },
+      { "position": "WR", "minDraftable": 3, "maxDraftable": 6, "notes": "3 starter + 1 FLEX + 2 bench" },
+      { "position": "TE", "minDraftable": 1, "maxDraftable": 4, "notes": "1 starter + 1 FLEX + 2 bench" },
+      { "position": "K", "minDraftable": 1, "maxDraftable": 3, "notes": "1 starter + 2 bench" },
+      { "position": "DST", "minDraftable": 1, "maxDraftable": 3, "notes": "1 starter + 2 bench" },
+      { "position": "FLEX", "minDraftable": 1, "maxDraftable": 1, "notes": "Required slot, accepts RB/WR/TE" },
+      { "position": "BENCH", "minDraftable": 2, "maxDraftable": 2, "notes": "2 bench slots" }
+    ]
+  }
+]
